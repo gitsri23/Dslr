@@ -25,10 +25,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.FloatBuffer
 
-enum class AspectRatioType {
-    RATIO_9_16,
-    RATIO_1_1
-}
+enum class AspectRatioType { RATIO_9_16, RATIO_1_1 }
+enum class ResolutionType { RES_720P, RES_1080P }
 
 sealed class ProcessingState {
     object Idle : ProcessingState()
@@ -45,6 +43,7 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
     var depthIntensity = MutableStateFlow(0.7f)
     var warmth = MutableStateFlow(0.5f)
     var aspectRatio = MutableStateFlow(AspectRatioType.RATIO_9_16)
+    var resolution = MutableStateFlow(ResolutionType.RES_720P)
 
     private val _latestFrame = MutableStateFlow<Bitmap?>(null)
     val latestFrame: StateFlow<Bitmap?> get() = _latestFrame
@@ -62,7 +61,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
     private var videoEncoder: VideoEncoder? = null
     private val processingScope = CoroutineScope(Dispatchers.Default)
 
-    // ─── 🚀 GPU RenderScript Engines ───
     private var rs: RenderScript? = null
     private var blurScript: ScriptIntrinsicBlur? = null
 
@@ -75,7 +73,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         try {
             rs = RenderScript.create(context)
             blurScript = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
-            Log.d("CameraProcessManager", "Hardware RenderScript GPU Blur Engine initialized!")
         } catch (e: Exception) {
             Log.e("CameraProcessManager", "GPU Engine init failed", e)
         }
@@ -112,22 +109,19 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         }
 
         try {
-            // ─── 🛠️ FIX 1: Exact Sensor Rotation Sync ───
             val rotationDegrees = imageProxy.imageInfo.rotationDegrees.toFloat()
             val matrix = Matrix()
             matrix.postRotate(rotationDegrees)
-            // Optional: Mirror for front camera using scale(-1f, 1f)
 
             val rotatedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
 
-            // Scale down for extreme real-time smoothness
-            val targetHeight = 640
+            // ─── HD/FHD Dynamic Scaling ───
+            val targetHeight = if (resolution.value == ResolutionType.RES_1080P) 1920 else 1280
             val targetWidth = (rotatedBitmap.width * (targetHeight.toFloat() / rotatedBitmap.height)).toInt()
             val workingBitmap = Bitmap.createScaledBitmap(rotatedBitmap, targetWidth, targetHeight, true)
 
             val croppedBitmap = cropBitmapToRatio(workingBitmap, aspectRatio.value == AspectRatioType.RATIO_1_1)
 
-            // MediaPipe Segmentation
             val mpImage = BitmapImageBuilder(croppedBitmap).build()
             val result = segmenter.segment(mpImage)
             
@@ -138,7 +132,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
                 val byteBuffer = ByteBufferExtractor.extract(maskImage)
                 val confidenceBuffer = byteBuffer.asFloatBuffer()
 
-                // ─── 🚀 FIX 2: Hardware GPU Gaussian Blur ───
                 val blurredBitmap = hardwareGaussianBlur(croppedBitmap, depthIntensity.value)
 
                 val finalProcessedFrame = processFrame(
@@ -165,7 +158,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
                 }
             }
 
-            // ─── 🛠️ FIX 3: Memory Cleanup ───
             croppedBitmap.recycle()
             workingBitmap.recycle()
             rotatedBitmap.recycle()
@@ -184,8 +176,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         val rsContext = rs ?: return src
         val script = blurScript ?: return src
 
-        // DSLR Trick: Scale down to 25% size, apply max GPU radius (25f), then scale up. 
-        // This gives massive, creamy light-bleed bokeh with zero lag.
         val scale = 0.25f 
         val w = Math.max(16, (src.width * scale).toInt())
         val h = Math.max(16, (src.height * scale).toInt())
@@ -243,6 +233,11 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         for (i in 0 until count) {
             val maskVal = if (i < maskBuffer.limit()) maskBuffer.get(i) else 0.5f
             
+            // ─── Edge Feathering (Polynomial Smoothstep) ───
+            // Converts linear AI mask to an s-curve, softening hair edges significantly
+            val smoothedMask = maskVal * maskVal * (3f - 2f * maskVal)
+            val effectiveMaskVal = smoothedMask + (1f - smoothedMask) * (1f - intensity)
+            
             val op = origPixels[i]
             val oR = (op ushr 16) and 0xff
             val oG = (op ushr 8) and 0xff
@@ -252,8 +247,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
             val bR = (bp ushr 16) and 0xff
             val bG = (bp ushr 8) and 0xff
             val bB = bp and 0xff
-            
-            val effectiveMaskVal = maskVal + (1f - maskVal) * (1f - intensity)
             
             var outR = (oR * effectiveMaskVal + bR * (1f - effectiveMaskVal)).toInt()
             var outG = (oG * effectiveMaskVal + bG * (1f - effectiveMaskVal)).toInt()
@@ -278,7 +271,10 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
 
         val currentFrame = _latestFrame.value ?: return
         val tempFile = File(context.cacheDir, "temp_record_${System.currentTimeMillis()}.mp4")
-        videoEncoder = VideoEncoder(context, tempFile, currentFrame.width, currentFrame.height)
+        
+        // ─── Dynamic Bitrate (1080p = 8Mbps | 720p = 3Mbps) ───
+        val dynamicBitRate = if (currentFrame.height >= 1920) 8000000 else 3000000
+        videoEncoder = VideoEncoder(context, tempFile, currentFrame.width, currentFrame.height, bitRate = dynamicBitRate)
 
         try {
             videoEncoder?.start()
