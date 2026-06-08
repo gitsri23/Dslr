@@ -3,8 +3,11 @@ package com.example.blur
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.media.Image
 import android.net.Uri
+import android.renderscript.Allocation
+import android.renderscript.Element
+import android.renderscript.RenderScript
+import android.renderscript.ScriptIntrinsicBlur
 import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -39,16 +42,13 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
     private val _processingState = MutableStateFlow<ProcessingState>(ProcessingState.Idle)
     val processingState: StateFlow<ProcessingState> get() = _processingState
 
-    // Manual adjustments
     var depthIntensity = MutableStateFlow(0.7f)
     var warmth = MutableStateFlow(0.5f)
     var aspectRatio = MutableStateFlow(AspectRatioType.RATIO_9_16)
 
-    // Current output frame bitmap for UI display
     private val _latestFrame = MutableStateFlow<Bitmap?>(null)
     val latestFrame: StateFlow<Bitmap?> get() = _latestFrame
 
-    // Recording states
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> get() = _isRecording
 
@@ -62,14 +62,28 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
     private var videoEncoder: VideoEncoder? = null
     private val processingScope = CoroutineScope(Dispatchers.Default)
 
+    // ─── 🚀 GPU RenderScript Engines ───
+    private var rs: RenderScript? = null
+    private var blurScript: ScriptIntrinsicBlur? = null
+
     init {
+        initGPU()
         initSegmenter()
+    }
+
+    private fun initGPU() {
+        try {
+            rs = RenderScript.create(context)
+            blurScript = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
+            Log.d("CameraProcessManager", "Hardware RenderScript GPU Blur Engine initialized!")
+        } catch (e: Exception) {
+            Log.e("CameraProcessManager", "GPU Engine init failed", e)
+        }
     }
 
     private fun initSegmenter() {
         _processingState.value = ProcessingState.InitializingEngine
         try {
-            // Load pre-built model directly from system Assets
             val options = ImageSegmenter.ImageSegmenterOptions.builder()
                 .setBaseOptions(BaseOptions.builder().setModelAssetPath("selfie_segmenter.tflite").build())
                 .setRunningMode(RunningMode.IMAGE)
@@ -79,14 +93,11 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
 
             imageSegmenter = ImageSegmenter.createFromOptions(context, options)
             _processingState.value = ProcessingState.Ready
-            Log.d("CameraProcessManager", "ImageSegmenter initialized successfully from bundled assets!")
         } catch (e: Exception) {
-            Log.e("CameraProcessManager", "Error initializing MediaPipe ImageSegmenter", e)
-            _processingState.value = ProcessingState.Error("Engine startup error: ${e.localizedMessage}")
+            _processingState.value = ProcessingState.Error("Engine error: ${e.localizedMessage}")
         }
     }
 
-    // Capture standard frames and process them
     override fun analyze(imageProxy: ImageProxy) {
         val segmenter = imageSegmenter
         if (_processingState.value != ProcessingState.Ready || segmenter == null) {
@@ -94,38 +105,42 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
             return
         }
 
+        val rawBitmap = imageProxy.toBitmap()
+        if (rawBitmap == null) {
+            imageProxy.close()
+            return
+        }
+
         try {
-            // Get bitmap with correct orientation natively via CameraX
-            val rawBitmap = imageProxy.toBitmap() ?: return
+            // ─── 🛠️ FIX 1: Exact Sensor Rotation Sync ───
+            val rotationDegrees = imageProxy.imageInfo.rotationDegrees.toFloat()
+            val matrix = Matrix()
+            matrix.postRotate(rotationDegrees)
+            // Optional: Mirror for front camera using scale(-1f, 1f)
 
-            // Standard camera frame is rotated. Scale down to 360p or 480p equivalent for extreme smoothness.
+            val rotatedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+
+            // Scale down for extreme real-time smoothness
             val targetHeight = 640
-            val targetWidth = (rawBitmap.width * (targetHeight.toFloat() / rawBitmap.height)).toInt()
-            val workingBitmap = Bitmap.createScaledBitmap(rawBitmap, targetWidth, targetHeight, true)
+            val targetWidth = (rotatedBitmap.width * (targetHeight.toFloat() / rotatedBitmap.height)).toInt()
+            val workingBitmap = Bitmap.createScaledBitmap(rotatedBitmap, targetWidth, targetHeight, true)
 
-            // Crop according to selected Aspect Ratio
             val croppedBitmap = cropBitmapToRatio(workingBitmap, aspectRatio.value == AspectRatioType.RATIO_1_1)
 
-            // 1. Run MediaPipe Segmentation directly
+            // MediaPipe Segmentation
             val mpImage = BitmapImageBuilder(croppedBitmap).build()
             val result = segmenter.segment(mpImage)
             
-            // Extract the confidence mask from optional Java list safely
             val masksOpt = result.confidenceMasks()
-            val maskImage = if (masksOpt != null && masksOpt.isPresent) {
-                masksOpt.get()[0]
-            } else {
-                null
-            }
+            val maskImage = if (masksOpt != null && masksOpt.isPresent) masksOpt.get()[0] else null
 
             if (maskImage != null) {
                 val byteBuffer = ByteBufferExtractor.extract(maskImage)
                 val confidenceBuffer = byteBuffer.asFloatBuffer()
 
-                // 2. Perform blurring natively
-                val blurredBitmap = fastBlur(croppedBitmap, depthIntensity.value)
+                // ─── 🚀 FIX 2: Hardware GPU Gaussian Blur ───
+                val blurredBitmap = hardwareGaussianBlur(croppedBitmap, depthIntensity.value)
 
-                // 3. Process the frame blending & color balance in one step
                 val finalProcessedFrame = processFrame(
                     croppedBitmap,
                     blurredBitmap,
@@ -134,38 +149,68 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
                     depthIntensity.value
                 )
 
-                // Render frame
                 val oldFrame = _latestFrame.value
                 _latestFrame.value = finalProcessedFrame
 
-                // Clean memory
                 oldFrame?.recycle()
                 blurredBitmap.recycle()
 
-                // If recording, feed to encoder
                 if (_isRecording.value) {
                     videoEncoder?.let { encoder ->
                         processingScope.launch {
-                            try {
-                                encoder.encodeFrame(finalProcessedFrame, System.nanoTime())
-                            } catch (e: Exception) {
-                                Log.e("CameraProcessManager", "Encoding frame failed", e)
-                            }
+                            try { encoder.encodeFrame(finalProcessedFrame, System.nanoTime()) } 
+                            catch (e: Exception) {}
                         }
                     }
                 }
             }
 
-            // Cleanup
+            // ─── 🛠️ FIX 3: Memory Cleanup ───
             croppedBitmap.recycle()
             workingBitmap.recycle()
+            rotatedBitmap.recycle()
             rawBitmap.recycle()
 
         } catch (e: Exception) {
-            Log.e("CameraProcessManager", "Analysis frame failed", e)
+            Log.e("CameraProcessManager", "Frame failed", e)
         } finally {
             imageProxy.close()
         }
+    }
+
+    private fun hardwareGaussianBlur(src: Bitmap, intensity: Float): Bitmap {
+        if (intensity <= 0.05f) return src.copy(src.config ?: Bitmap.Config.ARGB_8888, true)
+
+        val rsContext = rs ?: return src
+        val script = blurScript ?: return src
+
+        // DSLR Trick: Scale down to 25% size, apply max GPU radius (25f), then scale up. 
+        // This gives massive, creamy light-bleed bokeh with zero lag.
+        val scale = 0.25f 
+        val w = Math.max(16, (src.width * scale).toInt())
+        val h = Math.max(16, (src.height * scale).toInt())
+
+        val scaledDown = Bitmap.createScaledBitmap(src, w, h, true)
+        val blurredDown = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+
+        val allocIn = Allocation.createFromBitmap(rsContext, scaledDown)
+        val allocOut = Allocation.createFromBitmap(rsContext, blurredDown)
+
+        val radius = (intensity * 25f).coerceIn(1f, 25f)
+        script.setRadius(radius)
+        script.setInput(allocIn)
+        script.forEach(allocOut)
+
+        allocOut.copyTo(blurredDown)
+
+        val finalBlurred = Bitmap.createScaledBitmap(blurredDown, src.width, src.height, true)
+
+        allocIn.destroy()
+        allocOut.destroy()
+        scaledDown.recycle()
+        blurredDown.recycle()
+
+        return finalBlurred
     }
 
     private fun cropBitmapToRatio(bitmap: Bitmap, isSquare: Boolean): Bitmap {
@@ -178,57 +223,8 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         return Bitmap.createBitmap(bitmap, xOffset, yOffset, minDim, minDim, null, false)
     }
 
-    private fun fastBlur(src: Bitmap, intensity: Float): Bitmap {
-        if (intensity <= 0.05f) return src.copy(src.config ?: Bitmap.Config.ARGB_8888, true)
-        
-        // Scale down is proportional to blur requirements.
-        val scale = 0.05f + (1f - intensity) * 0.15f
-        val w = Math.max(16, (src.width * scale).toInt())
-        val h = Math.max(16, (src.height * scale).toInt())
-        
-        val scaledDown = Bitmap.createScaledBitmap(src, w, h, true)
-        val blurredMini = boxBlur(scaledDown)
-        val scaledBack = Bitmap.createScaledBitmap(blurredMini, src.width, src.height, true)
-        
-        scaledDown.recycle()
-        blurredMini.recycle()
-        return scaledBack
-    }
-
-    private fun boxBlur(src: Bitmap): Bitmap {
-        val w = src.width
-        val h = src.height
-        val pixels = IntArray(w * h)
-        val out = IntArray(w * h)
-        src.getPixels(pixels, 0, w, 0, 0, w, h)
-        
-        for (y in 1 until h - 1) {
-            for (x in 1 until w - 1) {
-                var rSum = 0; var gSum = 0; var bSum = 0; var aSum = 0
-                for (ky in -1..1) {
-                    for (kx in -1..1) {
-                        val p = pixels[(y + ky) * w + (x + kx)]
-                        aSum += (p ushr 24) and 0xff
-                        rSum += (p ushr 16) and 0xff
-                        gSum += (p ushr 8) and 0xff
-                        bSum += p and 0xff
-                    }
-                }
-                out[y * w + x] = ((aSum / 9) shl 24) or ((rSum / 9) shl 16) or ((gSum / 9) shl 8) or (bSum / 9)
-            }
-        }
-        
-        val res = Bitmap.createBitmap(w, h, src.config ?: Bitmap.Config.ARGB_8888)
-        res.setPixels(out, 0, w, 0, 0, w, h)
-        return res
-    }
-
     private fun processFrame(
-        original: Bitmap,
-        blurred: Bitmap,
-        maskBuffer: FloatBuffer,
-        warmthVal: Float,
-        intensity: Float
+        original: Bitmap, blurred: Bitmap, maskBuffer: FloatBuffer, warmthVal: Float, intensity: Float
     ): Bitmap {
         val w = original.width
         val h = original.height
@@ -248,7 +244,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
             val maskVal = if (i < maskBuffer.limit()) maskBuffer.get(i) else 0.5f
             
             val op = origPixels[i]
-            val oA = (op ushr 24) and 0xff
             val oR = (op ushr 16) and 0xff
             val oG = (op ushr 8) and 0xff
             val oB = op and 0xff
@@ -258,7 +253,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
             val bG = (bp ushr 8) and 0xff
             val bB = bp and 0xff
             
-            // Scaled blur blend
             val effectiveMaskVal = maskVal + (1f - maskVal) * (1f - intensity)
             
             var outR = (oR * effectiveMaskVal + bR * (1f - effectiveMaskVal)).toInt()
@@ -270,7 +264,7 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
                 outB = (outB * bFactor).toInt().coerceIn(0, 255)
             }
             
-            outPixels[i] = (oA shl 24) or (outR shl 16) or (outG shl 8) or outB
+            outPixels[i] = (255 shl 24) or (outR shl 16) or (outG shl 8) or outB
         }
         
         val result = Bitmap.createBitmap(w, h, original.config ?: Bitmap.Config.ARGB_8888)
@@ -278,35 +272,26 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         return result
     }
 
-    // Recording API
     fun startRecording() {
         if (_isRecording.value) return
         _lastSavedVideoUri.value = null
 
         val currentFrame = _latestFrame.value ?: return
-        val w = currentFrame.width
-        val h = currentFrame.height
-
         val tempFile = File(context.cacheDir, "temp_record_${System.currentTimeMillis()}.mp4")
-        videoEncoder = VideoEncoder(context, tempFile, w, h)
+        videoEncoder = VideoEncoder(context, tempFile, currentFrame.width, currentFrame.height)
 
         try {
             videoEncoder?.start()
             _isRecording.value = true
             _recordingDurationSec.value = 0
             
-            // Duration timer ticker
             processingScope.launch {
                 while (_isRecording.value) {
                     kotlinx.coroutines.delay(1000)
-                    if (_isRecording.value) {
-                        _recordingDurationSec.value += 1
-                    }
+                    if (_isRecording.value) _recordingDurationSec.value += 1
                 }
             }
-            Log.d("CameraProcessManager", "Started video recording successfully")
         } catch (e: Exception) {
-            Log.e("CameraProcessManager", "Failed to start recording session", e)
             videoEncoder = null
             _isRecording.value = false
         }
@@ -320,15 +305,9 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
             val encoder = videoEncoder ?: return@launch
             try {
                 val savedUri = encoder.stop()
-                withContext(Dispatchers.Main) {
-                    _lastSavedVideoUri.value = savedUri
-                    Log.d("CameraProcessManager", "Stopped video recording. File Uri: $savedUri")
-                }
-            } catch (e: Exception) {
-                Log.e("CameraProcessManager", "Failed to stop recording correctly", e)
-            } finally {
-                videoEncoder = null
-            }
+                withContext(Dispatchers.Main) { _lastSavedVideoUri.value = savedUri }
+            } catch (e: Exception) {} 
+            finally { videoEncoder = null }
         }
     }
 }
