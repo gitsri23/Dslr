@@ -28,10 +28,18 @@ jobs:
           mkdir -p app/src/main/assets
           wget -qO app/src/main/assets/selfie_segmenter.tflite https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
 
-      - name: Create Missing Env File
+      # ─── 🛠️ FIX: Generate missing environment files and Keystore ───
+      - name: Create Missing Env File & Keystore
         run: |
           touch .env.example
           touch local.properties
+          
+          # Automatically create a debug keystore if it doesn't exist
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
+          fi
 
       - name: Generate Missing Android Resources
         run: |
@@ -83,7 +91,6 @@ jobs:
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 9.3.1
 
-      # ─── 🛠️ FIX: Changed assembleRelease to assembleDebug ───
       - name: Compile Debug APK
         run: ./gradlew assembleDebug
 
