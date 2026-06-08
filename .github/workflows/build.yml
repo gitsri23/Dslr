@@ -33,12 +33,59 @@ jobs:
           touch .env.example
           touch local.properties
 
+      # ─── 🛠️ FIX: Generate Missing Android App Resources (Icons, Strings, Themes) ───
+      - name: Generate Missing Android Resources
+        run: |
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
+
+          # 1. strings.xml
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">Portrait Blur</string>
+          </resources>
+          EOF
+
+          # 2. themes.xml
+          cat << 'EOF' > app/src/main/res/values/themes.xml
+          <resources>
+              <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar" />
+          </resources>
+          EOF
+
+          # 3. backup_rules.xml
+          cat << 'EOF' > app/src/main/res/xml/backup_rules.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <full-backup-content>
+              <include domain="sharedpref" path="."/>
+          </full-backup-content>
+          EOF
+
+          # 4. data_extraction_rules.xml
+          cat << 'EOF' > app/src/main/res/xml/data_extraction_rules.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <data-extraction-rules>
+              <cloud-backup><include domain="sharedpref" path="."/></cloud-backup>
+              <device-transfer><include domain="sharedpref" path="."/></device-transfer>
+          </data-extraction-rules>
+          EOF
+
+          # 5. Default Adaptive Icons
+          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@android:color/black"/>
+              <foreground android:drawable="@android:color/white"/>
+          </adaptive-icon>
+          EOF
+          cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: wrapper
 
-      # ─── 🛠️ FIX: Updated Gradle Wrapper version to 9.3.1 ───
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 9.3.1
 
