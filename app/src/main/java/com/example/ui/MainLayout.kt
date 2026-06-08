@@ -60,7 +60,6 @@ fun MainLayout(
         permissionsState.launchMultiplePermissionRequest()
     }
 
-    // Stable background preview engine thread mapping loop
     LaunchedEffect(permissionsState.allPermissionsGranted) {
         if (permissionsState.allPermissionsGranted) {
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -79,7 +78,7 @@ fun MainLayout(
                     cameraProvider.unbindAll()
                     cameraProvider.bindToLifecycle(lifecycleOwner, selector, imageAnalysis)
                 } catch (e: Exception) {
-                    Log.e("MainLayout", "Preview linkage mapping execution leaked", e)
+                    Log.e("MainLayout", "Preview engine configuration leakage prevented", e)
                 }
             }, ContextCompat.getMainExecutor(context))
         }
@@ -103,6 +102,8 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
     
     val currentAspect by cameraProcessManager.aspectRatio.collectAsStateWithLifecycle()
     val currentRes by cameraProcessManager.resolution.collectAsStateWithLifecycle()
+    val isRecording by cameraProcessManager.isRecording.collectAsStateWithLifecycle()
+    val recordDurationSec by cameraProcessManager.recordingDurationSec.collectAsStateWithLifecycle()
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -155,7 +156,20 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                 } ?: Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = "Live", tint = Color.DarkGray, modifier = Modifier.size(64.dp))
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("STARTING LIVE CAMERA PREVIEW...", color = Color.Gray, fontSize = 12.dp)
+                    Text("STARTING LIVE CAMERA PREVIEW...", color = Color.Gray, fontSize = 12.sp)
+                }
+            }
+
+            if (isRecording) {
+                Row(
+                    modifier = Modifier.align(Alignment.TopStart).padding(16.dp).background(Color(0xAA000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.size(10.dp).background(Color.Red, CircleShape))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    // FIX: Standard formatting implementation mapping
+                    val formatString = String.format("REC  %02d:%02d", recordDurationSec / 60, recordDurationSec % 60)
+                    Text(formatString, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
             }
         }
@@ -213,7 +227,6 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                     }
                 }
 
-                // Core execution asset selector button via clean vector parameters
                 Button(
                     onClick = { galleryLauncher.launch("video/*") },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.White),
