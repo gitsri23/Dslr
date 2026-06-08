@@ -103,7 +103,6 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
     val currentAspect by cameraProcessManager.aspectRatio.collectAsStateWithLifecycle()
     val currentRes by cameraProcessManager.resolution.collectAsStateWithLifecycle()
     val isRecording by cameraProcessManager.isRecording.collectAsStateWithLifecycle()
-    val recordDurationSec by cameraProcessManager.recordingDurationSec.collectAsStateWithLifecycle()
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -167,9 +166,7 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                 ) {
                     Box(modifier = Modifier.size(10.dp).background(Color.Red, CircleShape))
                     Spacer(modifier = Modifier.width(6.dp))
-                    // FIX: Standard formatting implementation mapping
-                    val formatString = String.format("REC  %02d:%02d", recordDurationSec / 60, recordDurationSec % 60)
-                    Text(formatString, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    Text("RENDERING FRAME ENGINE PASS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
             }
         }
