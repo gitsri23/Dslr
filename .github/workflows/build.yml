@@ -64,7 +64,7 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?><data-extraction-rules><cloud-backup><include domain="sharedpref" path="."/></cloud-backup><device-transfer><include domain="sharedpref" path="."/></device-transfer></data-extraction-rules>
           EOF
 
-          # 2. Dynamic generation of valid structural PNG launch assets directly using Java AWT
+          # 2. FIX: Standard clean drawing operations without variable leaks
           cat << 'EOF' > GenerateIcon.java
           import java.awt.*;
           import java.awt.image.BufferedImage;
@@ -80,11 +80,16 @@ jobs:
                       BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
                       Graphics2D g = img.createGraphics();
                       g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                      g.setColor(new Color(18, 18, 18));
-                      g.fillDropShadow = null; g.fillOval(0, 0, size, size);
+                      
+                      // Background Solid Custom Matrix
+                      g.setColor(new Color(25, 25, 28));
+                      g.fillOval(0, 0, size, size);
+                      
+                      // Cinematic Target Camera Shutter Inner Ring
                       g.setColor(Color.YELLOW);
-                      g.setStroke(new BasicStroke(size / 12f));
+                      g.setStroke(new BasicStroke(size / 14f));
                       g.drawOval(size/4, size/4, size/2, size/2);
+                      
                       g.dispose();
                       ImageIO.write(img, "png", new File("app/src/main/res/mipmap-" + paths[i] + "/ic_launcher.png"));
                       ImageIO.write(img, "png", new File("app/src/main/res/mipmap-" + paths[i] + "/ic_launcher_round.png"));
