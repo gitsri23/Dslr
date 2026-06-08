@@ -60,7 +60,7 @@ fun MainLayout(
         permissionsState.launchMultiplePermissionRequest()
     }
 
-    // Dynamic Live Camera binding matrix setup
+    // Stable background preview engine thread mapping loop
     LaunchedEffect(permissionsState.allPermissionsGranted) {
         if (permissionsState.allPermissionsGranted) {
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -79,7 +79,7 @@ fun MainLayout(
                     cameraProvider.unbindAll()
                     cameraProvider.bindToLifecycle(lifecycleOwner, selector, imageAnalysis)
                 } catch (e: Exception) {
-                    Log.e("MainLayout", "Camera provider runtime leakage", e)
+                    Log.e("MainLayout", "Preview linkage mapping execution leaked", e)
                 }
             }, ContextCompat.getMainExecutor(context))
         }
@@ -213,13 +213,14 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                     }
                 }
 
+                // Core execution asset selector button via clean vector parameters
                 Button(
                     onClick = { galleryLauncher.launch("video/*") },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                     shape = RoundedCornerShape(28.dp),
                     modifier = Modifier.height(56.dp).weight(1f).padding(horizontal = 16.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black)
+                    Icon(Icons.Default.Share, contentDescription = null, tint = Color.Black)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("SELECT & EXPORT", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 12.sp)
                 }
