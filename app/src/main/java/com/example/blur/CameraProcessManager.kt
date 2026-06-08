@@ -79,31 +79,37 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         }
     }
 
-    // Live analyzer keeps running for preview fluid display
     override fun analyze(imageProxy: ImageProxy) {
-        if (_processingState.value is ProcessingState.ProcessingVideo) {
+        val segmenter = imageSegmenter
+        if (segmenter == null) {
             imageProxy.close()
-            return // Skip live analytical camera computation if export pipeline is processing
+            return
         }
-        val segmenter = imageSegmenter ?: return imageProxy.close()
 
-        val rawBitmap = imageProxy.toBitmap() ?: return imageProxy.close()
+        val rawBitmap = imageProxy.toBitmap()
+        if (rawBitmap == null) {
+            imageProxy.close()
+            return
+        }
+
         try {
             val rotationDegrees = imageProxy.imageInfo.rotationDegrees.toFloat()
             val matrix = Matrix().apply { postRotate(rotationDegrees) }
             val rotatedBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
 
-            // Dynamic Live preview scaling down to maintain perfect UX frames
+            // Real-time preview frames processing (Fluid camera execution always active)
             val targetHeight = 480
             val targetWidth = (rotatedBitmap.width * (targetHeight.toFloat() / rotatedBitmap.height)).toInt()
             val workingBitmap = Bitmap.createScaledBitmap(rotatedBitmap, targetWidth, targetHeight, true)
             val croppedBitmap = cropBitmapToRatio(workingBitmap, aspectRatio.value == AspectRatioType.RATIO_1_1)
 
-            val processedFrame = processSingleBitmapFrame(croppedBitmap, segmenter)
-            if (processedFrame != null) {
-                val oldFrame = _latestFrame.value
-                _latestFrame.value = processedFrame
-                oldFrame?.recycle()
+            if (_processingState.value !is ProcessingState.ProcessingVideo) {
+                val processedFrame = processSingleBitmapFrame(croppedBitmap, segmenter)
+                if (processedFrame != null) {
+                    val oldFrame = _latestFrame.value
+                    _latestFrame.value = processedFrame
+                    oldFrame?.recycle()
+                }
             }
 
             croppedBitmap.recycle()
@@ -111,21 +117,19 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
             rotatedBitmap.recycle()
             rawBitmap.recycle()
         } catch (e: Exception) {
-            Log.e("CameraProcessManager", "Live frame processing failed", e)
+            Log.e("CameraProcessManager", "Live preview extraction tracking collapsed", e)
         } finally {
             imageProxy.close()
         }
     }
 
-    // ─── 🚀 BRAND NEW: OFFLINE GALLERY VIDEO IMPORT & HIGH FIDELITY EXPORT PIPELINE ───
     fun processAndExportGalleryVideo(inputVideoUri: Uri) {
         val segmenter = imageSegmenter ?: return
         _processingState.value = ProcessingState.ProcessingVideo
-        _exportProgress.value = 0f
+        _exportProgress.value = 0.01f
 
         processingScope.launch {
             try {
-                // Determine output resolution dimensions dynamically
                 val exportHeight = when (resolution.value) {
                     ResolutionType.RES_1080P -> 1920
                     ResolutionType.RES_720P -> 1280
@@ -134,19 +138,16 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
                 val exportWidth = if (aspectRatio.value == AspectRatioType.RATIO_1_1) exportHeight else (exportHeight * 9) / 16
 
                 val tempOutputFile = File(context.cacheDir, "Export_Cinematic_${System.currentTimeMillis()}.mp4")
-                
-                // Dynamic bit-rate allocation based on manual resolution selection
                 val calculatedBitrate = when (resolution.value) {
-                    ResolutionType.RES_1080P -> 10000000 // 10 Mbps pristine data
-                    ResolutionType.RES_720P -> 5000000   // 5 Mbps HD data
-                    ResolutionType.RES_480P -> 2000000   // 2 Mbps SD data
+                    ResolutionType.RES_1080P -> 10000000
+                    ResolutionType.RES_720P -> 5000000
+                    ResolutionType.RES_480P -> 2000000
                 }
 
                 val encoder = VideoEncoder(context, tempOutputFile, exportWidth, exportHeight, bitRate = calculatedBitrate)
                 encoder.start()
 
-                // Simulating extraction frames loops smoothly for precise polynomial matrix transformations
-                val totalFramesToSimulate = 90 // 3 seconds layout sample iteration for preview rendering
+                val totalFramesToSimulate = 90
                 for (frameIdx in 0 until totalFramesToSimulate) {
                     val currentPreviewFrame = _latestFrame.value
                     if (currentPreviewFrame != null && !currentPreviewFrame.isRecycled) {
@@ -154,12 +155,12 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
                         val outputBlurredFrame = processSingleBitmapFrame(frameToProcess, segmenter)
                         
                         if (outputBlurredFrame != null) {
-                            encoder.encodeFrame(outputBlurredFrame, frameIdx * 33333333L) // Precise 30fps nanosecond timing injection
+                            encoder.encodeFrame(outputBlurredFrame, frameIdx * 33333333L)
                             outputBlurredFrame.recycle()
                         }
                         frameToProcess.recycle()
                     }
-                    _exportProgress.value = (frameIdx.toFloat() / totalFramesToSimulate)
+                    _exportProgress.value = (frameIdx.toFloat() / totalFramesToSimulate).coerceIn(0.01f, 1f)
                 }
 
                 val savedUri = encoder.stop()
@@ -168,12 +169,11 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
                         _lastSavedVideoUri.value = savedUri
                         _processingState.value = ProcessingState.Success(savedUri)
                     } else {
-                        _processingState.value = ProcessingState.Error("Failed to save final multiplexed media configuration to standard gallery path.")
+                        _processingState.value = ProcessingState.Error("Muxer saving operation failed.")
                     }
                 }
             } catch (e: Exception) {
-                Log.e("CameraProcessManager", "Video background rendering compilation collapsed", e)
-                _processingState.value = ProcessingState.Error("Processing collapsed: ${e.localizedMessage}")
+                _processingState.value = ProcessingState.Error("Rendering exception: ${e.localizedMessage}")
             }
         }
     }
@@ -197,8 +197,7 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
     private fun creamyCPUBlur(src: Bitmap, intensity: Float): Bitmap {
         if (intensity <= 0.05f) return src.copy(src.config ?: Bitmap.Config.ARGB_8888, true)
         
-        // Multi-pass structural downsampling for butter-soft creamy bokeh aesthetics
-        val scale = 0.18f - (intensity * 0.10f)
+        val scale = 0.20f - (intensity * 0.12f)
         val w = Math.max(16, (src.width * scale).toInt())
         val h = Math.max(16, (src.height * scale).toInt())
 
@@ -259,8 +258,6 @@ class CameraProcessManager(private val context: Context) : ImageAnalysis.Analyze
         
         for (i in 0 until count) {
             val maskVal = if (i < mask.limit()) mask.get(i) else 0.5f
-            
-            // Cubic Hermite polynomial smoothstep curves for seamless edge feathering
             val smoothedMask = maskVal * maskVal * (3f - 2f * maskVal)
             
             val op = origPixels[i]
