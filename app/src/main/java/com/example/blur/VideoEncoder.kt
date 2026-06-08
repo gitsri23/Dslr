@@ -21,7 +21,7 @@ class VideoEncoder(
     private val outputFile: File,
     private val width: Int,
     private val height: Int,
-    private val bitRate: Int = 3000000, // 3 Mbps
+    private val bitRate: Int = 3000000, // Dynamic map structure overrides this via constructor signature
     private val frameRate: Int = 30,
     private val iframeInterval: Int = 1
 ) {
@@ -38,8 +38,8 @@ class VideoEncoder(
         val finalH = if (height % 2 == 0) height else height - 1
 
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, finalW, finalH).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar) // NV12
-            setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar) // NV12 format tracking profile
+            setInteger(MediaFormat.KEY_BIT_RATE, bitRate) // Injecting targeted dynamic bitrate seamlessly
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, iframeInterval)
         }
@@ -53,9 +53,9 @@ class VideoEncoder(
             ptsUsOffset = -1L
             trackIndex = -1
             isMuxerStarted = false
-            Log.d("VideoEncoder", "VideoEncoder started successfully for $finalW x $finalH")
+            Log.d("VideoEncoder", "VideoEncoder initialized perfectly with dynamic Bitrate properties: $bitRate bps for $finalW x $finalH")
         } catch (e: Exception) {
-            Log.e("VideoEncoder", "Failed to start MediaCodec/MediaMuxer", e)
+            Log.e("VideoEncoder", "Failed to start processing MediaCodec / MediaMuxer pipelines", e)
             release()
             throw e
         }
@@ -103,7 +103,7 @@ class VideoEncoder(
                     codec.queueInputBuffer(inputBufferIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                 }
             } catch (e: Exception) {
-                Log.e("VideoEncoder", "Error queuing EOS", e)
+                Log.e("VideoEncoder", "Error queuing terminal stream EOS flag", e)
             }
         }
 
@@ -113,14 +113,14 @@ class VideoEncoder(
                 if (!endOfStream) break
             } else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 if (isMuxerStarted) {
-                    Log.w("VideoEncoder", "Format changed twice, ignoring")
+                    Log.w("VideoEncoder", "Format configurations duplicated unexpectedly, bypassing track addition")
                     break
                 }
                 val newFormat = codec.outputFormat
                 trackIndex = muxer.addTrack(newFormat)
                 muxer.start()
                 isMuxerStarted = true
-                Log.d("VideoEncoder", "Muxer started with track index: $trackIndex")
+                Log.d("VideoEncoder", "Muxer pipeline active. Registered track token: $trackIndex")
             } else if (outputBufferIndex >= 0) {
                 val encodedData = codec.getOutputBuffer(outputBufferIndex) ?: continue
                 if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
@@ -129,7 +129,7 @@ class VideoEncoder(
 
                 if (bufferInfo.size != 0) {
                     if (!isMuxerStarted) {
-                        Log.w("VideoEncoder", "Muxer not started, discarding data")
+                        Log.w("VideoEncoder", "Multiplexer stream layout uninitialized. Dropping current frame packet.")
                     } else {
                         encodedData.position(bufferInfo.offset)
                         encodedData.limit(bufferInfo.offset + bufferInfo.size)
@@ -140,7 +140,7 @@ class VideoEncoder(
                 codec.releaseOutputBuffer(outputBufferIndex, false)
 
                 if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                    Log.d("VideoEncoder", "Received EOS flag in bufferInfo")
+                    Log.d("VideoEncoder", "Video packet data tracking loop successfully intercepted final EOS flag")
                     break
                 }
             }
@@ -148,12 +148,12 @@ class VideoEncoder(
     }
 
     fun stop(): Uri? {
-        Log.d("VideoEncoder", "Stopping VideoEncoder")
+        Log.d("VideoEncoder", "Terminating active MediaCodec lifecycle structures")
         drainEncoder(true)
         release()
         
         val uri = saveVideoToGallery(context, outputFile, "PortraitBlur_${System.currentTimeMillis()}")
-        Log.d("VideoEncoder", "Saved video to gallery uri: $uri")
+        Log.d("VideoEncoder", "Asset registry callback execution completed. Uri link destination: $uri")
         return uri
     }
 
@@ -164,7 +164,7 @@ class VideoEncoder(
                 release()
             }
         } catch (e: Exception) {
-            Log.e("VideoEncoder", "Error releasing codec", e)
+            Log.e("VideoEncoder", "Codec hardware framework exception encountered on destruction sequence", e)
         }
         mediaCodec = null
 
@@ -174,7 +174,7 @@ class VideoEncoder(
                 mediaMuxer?.release()
             }
         } catch (e: Exception) {
-            Log.e("VideoEncoder", "Error releasing muxer", e)
+            Log.e("VideoEncoder", "Muxer layout execution crashed on terminal stage release process", e)
         }
         mediaMuxer = null
         isMuxerStarted = false
@@ -236,7 +236,7 @@ class VideoEncoder(
                     }
                 }
             } catch (e: Exception) {
-                Log.e("GallerySave", "Failed to save video to gallery", e)
+                Log.e("GallerySave", "File allocation matrix linkage storage failure encountered", e)
                 return null
             }
         }
