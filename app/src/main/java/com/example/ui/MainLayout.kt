@@ -124,7 +124,7 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                             Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Studio", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         }
                     } ?: Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(imageVector = Icons.Default.VideoLibrary, contentDescription = "Import", tint = Color.DarkGray, modifier = Modifier.size(64.dp))
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Import", tint = Color.DarkGray, modifier = Modifier.size(64.dp))
                         Spacer(modifier = Modifier.height(12.dp))
                         Text("NO VIDEO SELECTED", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
@@ -195,7 +195,7 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                     shape = RoundedCornerShape(28.dp),
                     modifier = Modifier.height(56.dp).weight(1f).padding(horizontal = 16.dp)
                 ) {
-                    Icon(Icons.Default.UploadFile, contentDescription = null, tint = Color.Black)
+                    Icon(Icons.Default.Share, contentDescription = null, tint = Color.Black)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("SELECT & EXPORT", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 12.sp)
                 }
