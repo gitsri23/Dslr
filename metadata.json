@@ -1,0 +1,6 @@
+{
+  "name": "Portrait Blur",
+  "description": "Portrait Background Blur Video Recorder with native Camera, advanced depth mapping, and MediaPipe real-time person segmentation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
