@@ -33,28 +33,24 @@ jobs:
           touch .env.example
           touch local.properties
 
-      # ─── 🛠️ FIX: Generate Missing Android App Resources (Icons, Strings, Themes) ───
       - name: Generate Missing Android Resources
         run: |
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/mipmap-anydpi-v26
 
-          # 1. strings.xml
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
               <string name="app_name">Portrait Blur</string>
           </resources>
           EOF
 
-          # 2. themes.xml
           cat << 'EOF' > app/src/main/res/values/themes.xml
           <resources>
               <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar" />
           </resources>
           EOF
 
-          # 3. backup_rules.xml
           cat << 'EOF' > app/src/main/res/xml/backup_rules.xml
           <?xml version="1.0" encoding="utf-8"?>
           <full-backup-content>
@@ -62,7 +58,6 @@ jobs:
           </full-backup-content>
           EOF
 
-          # 4. data_extraction_rules.xml
           cat << 'EOF' > app/src/main/res/xml/data_extraction_rules.xml
           <?xml version="1.0" encoding="utf-8"?>
           <data-extraction-rules>
@@ -71,7 +66,6 @@ jobs:
           </data-extraction-rules>
           EOF
 
-          # 5. Default Adaptive Icons
           cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -89,8 +83,9 @@ jobs:
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 9.3.1
 
-      - name: Compile Release APK
-        run: ./gradlew assembleRelease
+      # ─── 🛠️ FIX: Changed assembleRelease to assembleDebug ───
+      - name: Compile Debug APK
+        run: ./gradlew assembleDebug
 
       - name: Push APK to GitHub Releases
         uses: softprops/action-gh-release@v2
@@ -99,6 +94,6 @@ jobs:
           name: Portrait Blur Camera v1.0.${{ github.run_number }}
           draft: false
           prerelease: false
-          files: app/build/outputs/apk/release/*.apk
+          files: app/build/outputs/apk/debug/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
