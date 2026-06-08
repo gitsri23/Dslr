@@ -2,8 +2,12 @@ package com.example.ui
 
 import android.Manifest
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
@@ -25,10 +29,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.blur.AspectRatioType
 import com.example.blur.ResolutionType
@@ -43,12 +49,40 @@ fun MainLayout(
     cameraProcessManager: CameraProcessManager,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     val permissionsState = rememberMultiplePermissionsState(
         permissions = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
     )
 
     LaunchedEffect(Unit) {
         permissionsState.launchMultiplePermissionRequest()
+    }
+
+    // Dynamic Live Camera binding matrix setup
+    LaunchedEffect(permissionsState.allPermissionsGranted) {
+        if (permissionsState.allPermissionsGranted) {
+            val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+            cameraProviderFuture.addListener({
+                try {
+                    val cameraProvider = cameraProviderFuture.get()
+                    val selector = CameraSelector.DEFAULT_FRONT_CAMERA
+
+                    val imageAnalysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                        .build()
+
+                    imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(context), cameraProcessManager)
+
+                    cameraProvider.unbindAll()
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, imageAnalysis)
+                } catch (e: Exception) {
+                    Log.e("MainLayout", "Camera provider runtime leakage", e)
+                }
+            }, ContextCompat.getMainExecutor(context))
+        }
     }
 
     Box(
@@ -62,7 +96,6 @@ fun MainLayout(
 
 @Composable
 fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
-    val context = LocalContext.current
     val processingState by cameraProcessManager.processingState.collectAsStateWithLifecycle()
     val frameBitmap by cameraProcessManager.latestFrame.collectAsStateWithLifecycle()
     val exportProgress by cameraProcessManager.exportProgress.collectAsStateWithLifecycle()
@@ -83,7 +116,6 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
             .navigationBarsPadding()
             .statusBarsPadding()
     ) {
-        // Top Header Title block
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -97,7 +129,6 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
             }
         }
 
-        // Main Studio Display Viewfinder
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -107,32 +138,28 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                 .background(Color(0xFF141417)),
             contentAlignment = Alignment.Center
         ) {
-            when (processingState) {
-                is ProcessingState.ProcessingVideo -> {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(progress = { exportProgress }, color = Color.Yellow, modifier = Modifier.size(64.dp), strokeWidth = 6.dp)
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text("RENDERING HIGH-RES BOKEH...", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Text("${(exportProgress * 100).toInt()}% COMPLETED", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
-                    }
+            if (processingState is ProcessingState.ProcessingVideo) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(progress = { exportProgress }, color = Color.Yellow, modifier = Modifier.size(64.dp), strokeWidth = 6.dp)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text("RENDERING HIGH-RES BOKEH...", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("${(exportProgress * 100).toInt()}% COMPLETED", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                 }
-                else -> {
-                    frameBitmap?.let { bitmap ->
-                        if (currentAspect == AspectRatioType.RATIO_1_1) {
-                            Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Studio", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)))
-                        } else {
-                            Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Studio", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        }
-                    } ?: Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Import", tint = Color.DarkGray, modifier = Modifier.size(64.dp))
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("NO VIDEO SELECTED", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            } else {
+                frameBitmap?.let { bitmap ->
+                    if (currentAspect == AspectRatioType.RATIO_1_1) {
+                        Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Studio", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)))
+                    } else {
+                        Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Studio", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                     }
+                } ?: Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Live", tint = Color.DarkGray, modifier = Modifier.size(64.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("STARTING LIVE CAMERA PREVIEW...", color = Color.Gray, fontSize = 12.dp)
                 }
             }
         }
 
-        // Tuning HUD Sliders
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -161,13 +188,11 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                 }
             }
 
-            // Bottom Core Control Action Bar
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Toggles Capsule (Aspect Ratio + Manual Export Resolution)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(modifier = Modifier.height(34.dp).background(Color(0xFF141417), RoundedCornerShape(20.dp)).padding(3.dp), verticalAlignment = Alignment.CenterVertically) {
                         listOf(AspectRatioType.RATIO_9_16 to "9:16", AspectRatioType.RATIO_1_1 to "1:1").forEach { (type, label) ->
@@ -188,14 +213,13 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
                     }
                 }
 
-                // Import & Export Giant Shutter Layout Trigger
                 Button(
                     onClick = { galleryLauncher.launch("video/*") },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                     shape = RoundedCornerShape(28.dp),
                     modifier = Modifier.height(56.dp).weight(1f).padding(horizontal = 16.dp)
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = Color.Black)
+                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("SELECT & EXPORT", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 12.sp)
                 }
@@ -203,7 +227,6 @@ fun VideoStudioContent(cameraProcessManager: CameraProcessManager) {
         }
     }
 
-    // Success dialog callback trigger
     if (processingState is ProcessingState.Success) {
         AlertDialog(
             onDismissRequest = { cameraProcessManager.resetState() },
