@@ -28,7 +28,6 @@ jobs:
           mkdir -p app/src/main/assets
           wget -qO app/src/main/assets/selfie_segmenter.tflite https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
 
-      # ─── 🛠️ FIX: Create missing environment files for Secrets Plugin ───
       - name: Create Missing Env File
         run: |
           touch .env.example
@@ -39,8 +38,9 @@ jobs:
         with:
           gradle-version: wrapper
 
+      # ─── 🛠️ FIX: Updated Gradle Wrapper version to 9.3.1 ───
       - name: Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.7
+        run: gradle wrapper --gradle-version 9.3.1
 
       - name: Compile Release APK
         run: ./gradlew assembleRelease
