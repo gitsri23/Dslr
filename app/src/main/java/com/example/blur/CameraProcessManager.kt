@@ -185,7 +185,6 @@ class CameraProcessManager(private val context: Context) {
 
                 val rawVideoFile = encoder.stop()
 
-                // Mix original audio with the newly blurred video
                 val finalAudioMuxedFile = File(context.cacheDir, "Final_Export_${System.currentTimeMillis()}.mp4")
                 val muxSuccess = mixAudioAndVideo(uri, rawVideoFile, finalAudioMuxedFile)
 
@@ -276,8 +275,10 @@ class CameraProcessManager(private val context: Context) {
     // ─── 🚀 THE 10x SPEED OPTIMIZATION BLOCK ───
     private fun processSingleBitmapFrame(src: Bitmap, segmenter: ImageSegmenter): Bitmap? {
         val mpImage = BitmapImageBuilder(src).build()
-        val result = segmenter.segment(mpImage)
-        val masksOpt = result.confidenceMasks()
+        
+        // FIX: Renamed variable to avoid conflict
+        val segmentationResult = segmenter.segment(mpImage)
+        val masksOpt = segmentationResult.confidenceMasks()
         val maskImage = if (masksOpt != null && masksOpt.isPresent) masksOpt.get()[0] else return null
 
         val byteBuffer = ByteBufferExtractor.extract(maskImage)
@@ -364,12 +365,13 @@ class CameraProcessManager(private val context: Context) {
             outPixels[i] = (255 shl 24) or (outR shl 16) or (outG shl 8) or outB
         }
 
-        val result = Bitmap.createBitmap(w, h, src.config ?: Bitmap.Config.ARGB_8888)
-        result.setPixels(outPixels, 0, w, 0, 0, w, h)
+        // FIX: Renamed final output variable
+        val finalOutputBitmap = Bitmap.createBitmap(w, h, src.config ?: Bitmap.Config.ARGB_8888)
+        finalOutputBitmap.setPixels(outPixels, 0, w, 0, 0, w, h)
 
         blurredBgHW.recycle()
         smoothMaskHW.recycle()
-        return result
+        return finalOutputBitmap
     }
 
     private fun fastBoxBlur(src: Bitmap): Bitmap {
